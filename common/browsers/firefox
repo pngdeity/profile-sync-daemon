@@ -1,3 +1,20 @@
+if [[ -d "$XDG_CONFIG_HOME/mozilla/firefox" ]]; then
+    PSNAME="$browser"
+    while read -r line; do
+        if [[ "$line" =~ ^[Pp]ath=(.*)$ ]]; then
+            profileItem="${BASH_REMATCH[1]}"
+            if [[ "${profileItem:0:1}" == "/" ]]; then
+                # path is not relative
+                DIRArr+=("$profileItem")
+            else
+                # we need to append the default path to give a
+                # fully qualified path
+                DIRArr+=("$XDG_CONFIG_HOME/mozilla/firefox/$profileItem")
+            fi
+        fi
+    done < "$XDG_CONFIG_HOME/mozilla/firefox/profiles.ini"
+fi
+
 if [[ -d "$HOME"/.mozilla/firefox ]]; then
     PSNAME="$browser"
     while read -r line; do
