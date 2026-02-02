@@ -1,13 +1,10 @@
 # Profile-sync-daemon
-Profile-sync-daemon (psd) is a tiny pseudo-daemon designed to manage your browser's profile in tmpfs and to periodically sync it back to your physical disc (HDD/SSD). This is accomplished via a symlinking step and an innovative use of rsync to maintain back-up and synchronization between the two. One of the major design goals of psd is a completely transparent user experience.
+Profile-sync-daemon (psd) is a pseudo-daemon that manages your browser's profile in tmpfs and periodically syncs it back to your physical disc (HDD/SSD). This repository is a fork that allows the use of OpenDoas, in addition to sudo.
 
-## Good Advice
+## Good advice
 Always backup your browser profile(s) before using psd for the first time.
 
-## Users of eCryptFS
-User of eCryptFS are encouraged not to use psd unless willing to help troubleshoot suspected browser corruption. See [#158](https://github.com/graysky2/profile-sync-daemon/issues/158).
-
-## Supported Browsers
+## Supported browsers
 * Chromium
 * Conkeror
 * Epiphany
@@ -32,26 +29,10 @@ User of eCryptFS are encouraged not to use psd unless willing to help troublesho
 * Vivaldi-browser and Vivaldi-browser-snapshot
 
 ## Documentation
-Consult the man page or the wiki page: https://wiki.archlinux.org/index.php/Profile-sync-daemon
+Consult the man page, or see the [Arch Wiki article](https://wiki.archlinux.org/index.php/Profile-sync-daemon) for this software's upstream source.
 
-## Installation from Source
+## Installation
 To build from source, see the included INSTALL text document.
-
-## Installation from Distro Packages
-### Officially Packaged
-* Arch: in the extra [repo](https://archlinux.org/packages/extra/any/profile-sync-daemon/).
-* Debian: in the official [repos](https://packages.debian.org/unstable/profile-sync-daemon).
-* Exherbo: in the official [repos](http://git.exherbo.org/summer/packages/net-www/profile-sync-daemon).
-* Fedora: in the official [repos](https://src.fedoraproject.org/rpms/profile-sync-daemon).
-* Gentoo: in the official [repos](http://packages.gentoo.org/package/www-misc/profile-sync-daemon).
-* NixOS: in the official [repo](https://search.nixos.org/packages?channel=22.11&from=0&size=50&sort=relevance&type=packages&query=profile-sync).
-* Ubuntu: in Universe [repo](https://packages.ubuntu.com/search?keywords=profile-sync-daemon).
-
-### User Packaged
-* Slackware: on [slackbuilds](http://slackbuilds.org/apps/profile-sync-daemon/).
-
-### Other Distros
-If you are interested in packaging psd for your favorite distro, please contact me.
 
 ## logcheck
 Using logcheck? Here are some ways to filter out log lines:
