@@ -1,19 +1,19 @@
 # https://bbs.archlinux.org/viewtopic.php?id=117157
 if [[ -d "$HOME"/.mozilla/aurora ]]; then
-    index=0
     PSNAME="aurora"
-    while read -r profileItem; do
-        if [[ $(echo "$profileItem" | cut -c1) = "/" ]]; then
-            # path is not relative
-            DIRArr[$index]="$profileItem"
-        else
-            # we need to append the default path to give a
-            # fully qualified path
-            DIRArr[$index]="$HOME/.mozilla/aurora/$profileItem"
+    while read -r line; do
+        if [[ "$line" =~ ^[Pp]ath=(.*)$ ]]; then
+            profileItem="${BASH_REMATCH[1]}"
+            if [[ "${profileItem:0:1}" == "/" ]]; then
+                # path is not relative
+                DIRArr+=("$profileItem")
+            else
+                # we need to append the default path to give a
+                # fully qualified path
+                DIRArr+=("$HOME/.mozilla/aurora/$profileItem")
+            fi
         fi
-        (( index=index+1 ))
-    done < <(grep '[Pp]'ath= "$HOME"/.mozilla/firefox/profiles.ini | sed 's/[Pp]ath=//')
-
+    done < "$HOME"/.mozilla/firefox/profiles.ini
 fi
 
 check_suffix=1

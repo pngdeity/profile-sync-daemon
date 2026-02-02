@@ -1,17 +1,18 @@
 if [[ -d $HOME/.moonchild\ productions/pale\ moon ]]; then
-    index=0
     PSNAME="$browser"
-    while read -r profileItem; do
-        if [[ $(echo "$profileItem" | cut -c1) = "/" ]]; then
-            # path is not relative
-            DIRArr[$index]="$profileItem"
-        else
-            # we need to append the default path to give a
-            # fully qualified path
-            DIRArr[$index]="$HOME/.moonchild productions/pale moon/$profileItem"
+    while read -r line; do
+        if [[ "$line" =~ ^[Pp]ath=(.*)$ ]]; then
+            profileItem="${BASH_REMATCH[1]}"
+            if [[ "${profileItem:0:1}" == "/" ]]; then
+                # path is not relative
+                DIRArr+=("$profileItem")
+            else
+                # we need to append the default path to give a
+                # fully qualified path
+                DIRArr+=("$HOME/.moonchild productions/pale moon/$profileItem")
+            fi
         fi
-        (( index=index+1 ))
-    done < <(grep '[Pp]'ath= "$HOME"/.moonchild\ productions/pale\ moon/profiles.ini | sed 's/[Pp]ath=//')
+    done < "$HOME"/.moonchild\ productions/pale\ moon/profiles.ini
 fi
 
 check_suffix=1
