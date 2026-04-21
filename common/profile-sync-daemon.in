@@ -154,7 +154,9 @@ fi
 
 # remove duplicate elements if user accidentally polluted array with same entries
 # https://stackoverflow.com/questions/13648410/how-can-i-get-unique-values-from-an-array-in-bash
-readarray -t BROWSERS < <(printf '%s\n' "${BROWSERS[@]}" | awk '!x[$0]++')
+declare -A unique
+for b in "${BROWSERS[@]}"; do unique["$b"]=1; done
+BROWSERS=("${!unique[@]}")
 
 # simple function to determine user intent rather than using a null value
 case "${USE_SUSPSYNC,,}" in
@@ -402,23 +404,26 @@ kill_browsers() {
   # without this cannot guarantee profile integrity
   local browser
   for browser in "${BROWSERS[@]}"; do
-    load_env_for "$browser"
+    (
+      load_env_for "$browser"
 
-    local x=1
-    while [[ $x -le 60 ]]; do
-      [[ -n "$PSNAME" ]] || break
-      pgrep -x -u "$user" "$PSNAME" &>/dev/null || break
+      local x=1
+      while [[ $x -le 60 ]]; do
+        [[ -n "$PSNAME" ]] || break
+        pgrep -x -u "$user" "$PSNAME" &>/dev/null || break
 
-      if [[ $x -le 5 ]]; then
-        pkill -x -SIGTERM -u "$user" "$PSNAME"
-      else
-        pkill -x -SIGKILL -u "$user" "$PSNAME"
-      fi
+        if [[ $x -le 5 ]]; then
+          pkill -x -SIGTERM -u "$user" "$PSNAME"
+        else
+          pkill -x -SIGKILL -u "$user" "$PSNAME"
+        fi
 
-      x=$(( x + 1 ))
-      sleep .05
-    done
+        x=$(( x + 1 ))
+        sleep .05
+      done
+    ) &
   done
+  wait
 }
 
 do_sync_for() {
@@ -523,8 +528,9 @@ do_sync() {
 
   local browser
   for browser in "${BROWSERS[@]}"; do
-    do_sync_for "$browser"
+    do_sync_for "$browser" &
   done
+  wait
 }
 
 enforce() {
@@ -543,67 +549,73 @@ enforce() {
   done
 }
 
+do_unsync_for() {
+  browser="$1"
+  load_env_for "$browser"
+  for item in "${DIRArr[@]}"; do
+    DIR="$item"
+    BACKUP="$item-backup"
+    BACK_OVFS="$item-back-ovfs"
+    suffix=
+    if suffix_needed "$browser"; then
+      suffix="-${item##*/}"
+    fi
+    TMP="$VOLATILE/$user-$browser$suffix"
+    UPPER="$VOLATILE/$user-$browser${suffix}-rw"
+    WORK="$VOLATILE/.$user-$browser${suffix}"
+    # check if user has browser profile
+    if [[ -h "$DIR" ]]; then
+      unlink "$DIR"
+
+      # unmount overlayfs FIRST while BACKUP still exists at original location
+      # moving BACKUP before unmounting breaks the overlayfs mount (lowerdir path disappears)
+      if mountpoint -q "$TMP"; then
+        # sync latest changes from overlayfs to BACK_OVFS, then to BACKUP before unmounting
+        # always update BACK_OVFS from live overlayfs first to capture latest changes
+        if [[ -d "$BACK_OVFS" ]]; then
+          # Update BACK_OVFS with latest changes from live overlayfs
+          if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$TMP/" "$BACK_OVFS/"; then
+            echo -e "${RED}Error: Failed to sync $TMP to $BACK_OVFS during unsync${NRM}" >&2
+            exit 2
+          fi
+          # sync BACK_OVFS to BACKUP
+          if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$BACK_OVFS/" "$BACKUP/"; then
+            echo -e "${RED}Error: Failed to sync $BACK_OVFS to $BACKUP during unsync${NRM}" >&2
+            exit 2
+          fi
+        else
+          # BACK_OVFS doesn't exist, sync directly from TMP to BACKUP
+          if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$TMP/" "$BACKUP/"; then
+            echo -e "${RED}Error: Failed to sync $TMP to $BACKUP during unsync${NRM}" >&2
+            exit 2
+          fi
+        fi
+        # unmount (before moving BACKUP)
+        fusermount3 -u "$TMP"
+        rm -rf "$TMP" "$UPPER" "$WORK"
+      fi
+
+      # restore BACKUP (which now has the changes merged in)
+      [[ -d "$BACKUP" ]] && mv --no-target-directory "$BACKUP" "$DIR"
+      [[ -d "$TMP" ]] && rm -rf "$TMP"
+      echo -e "${BLD}$browser unsync successful${NRM}"
+    else
+      if [[ ! -d "$homedir" ]] ; then
+        echo -e "${RED}$DIR does not exist! Is /home unmounted?${NRM}" >&2
+        exit 1
+      fi
+    fi
+  done
+}
+
 do_unsync() {
   rm -f "$PID_FILE" "$PSDCONFDIR/.psd.conf"
 
   local browser
   for browser in "${BROWSERS[@]}"; do
-    load_env_for "$browser"
-    for item in "${DIRArr[@]}"; do
-      DIR="$item"
-      BACKUP="$item-backup"
-      BACK_OVFS="$item-back-ovfs"
-      suffix=
-      if suffix_needed "$browser"; then
-        suffix="-${item##*/}"
-      fi
-      TMP="$VOLATILE/$user-$browser$suffix"
-      UPPER="$VOLATILE/$user-$browser${suffix}-rw"
-      WORK="$VOLATILE/.$user-$browser${suffix}"
-      # check if user has browser profile
-      if [[ -h "$DIR" ]]; then
-        unlink "$DIR"
-
-        # unmount overlayfs FIRST while BACKUP still exists at original location
-        # moving BACKUP before unmounting breaks the overlayfs mount (lowerdir path disappears)
-        if mountpoint -q "$TMP"; then
-          # sync latest changes from overlayfs to BACK_OVFS, then to BACKUP before unmounting
-          # always update BACK_OVFS from live overlayfs first to capture latest changes
-          if [[ -d "$BACK_OVFS" ]]; then
-            # Update BACK_OVFS with latest changes from live overlayfs
-            if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$TMP/" "$BACK_OVFS/"; then
-              echo -e "${RED}Error: Failed to sync $TMP to $BACK_OVFS during unsync${NRM}" >&2
-              exit 2
-            fi
-            # sync BACK_OVFS to BACKUP
-            if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$BACK_OVFS/" "$BACKUP/"; then
-              echo -e "${RED}Error: Failed to sync $BACK_OVFS to $BACKUP during unsync${NRM}" >&2
-              exit 2
-            fi
-          else
-            # BACK_OVFS doesn't exist, sync directly from TMP to BACKUP
-            if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$TMP/" "$BACKUP/"; then
-              echo -e "${RED}Error: Failed to sync $TMP to $BACKUP during unsync${NRM}" >&2
-              exit 2
-            fi
-          fi
-          # unmount (before moving BACKUP)
-          fusermount3 -u "$TMP"
-          rm -rf "$TMP" "$UPPER" "$WORK"
-        fi
-
-        # restore BACKUP (which now has the changes merged in)
-        [[ -d "$BACKUP" ]] && mv --no-target-directory "$BACKUP" "$DIR"
-        [[ -d "$TMP" ]] && rm -rf "$TMP"
-        echo -e "${BLD}$browser unsync successful${NRM}"
-      else
-        if [[ ! -d "$homedir" ]] ; then
-          echo -e "${RED}$DIR does not exist! Is /home unmounted?${NRM}" >&2
-          exit 1
-        fi
-      fi
-    done
+    do_unsync_for "$browser" &
   done
+  wait
 }
 
 parse() {
@@ -654,7 +666,7 @@ parse() {
           [[ $TRUEP -ne 700 ]] && warn=1
         fi
         # profile dir size
-        psize=$(du -Dh --max-depth=0 "$DIR" 2>/dev/null | awk '{ print $1 }')
+        read -r psize _ < <(du -Dh --max-depth=0 "$DIR" 2>/dev/null)
         echo -en " ${BLD}browser/psname:"
         echo -e "$(tput cr)$(tput cuf 17) $browser/$PSNAME${NRM}"
         echo -en " ${BLD}owner/group id:"
@@ -671,7 +683,7 @@ parse() {
         echo -en " ${BLD}profile size:"
         echo -e "$(tput cr)$(tput cuf 17) $psize${NRM}"
         if [[ -f $PID_FILE ]]; then
-          rwsize=$(du -Dh --max-depth=0 "$UPPER" 2>/dev/null | awk '{ print $1 }')
+          read -r rwsize _ < <(du -Dh --max-depth=0 "$UPPER" 2>/dev/null)
           echo -en " ${BLD}overlayfs size:"
           echo -e "$(tput cr)$(tput cuf 17) $rwsize${NRM}"
         fi
@@ -686,7 +698,7 @@ parse() {
         else
           echo -e "$(tput cr)$(tput cuf 17) ${RED}${#CRASHArr[@]}${NRM}${BLD} <- delete with the c option${NRM}"
           for backup in "${CRASHArr[@]}"; do
-            psize=$(du -Dh --max-depth=0 "$backup" 2>/dev/null | awk '{ print $1 }')
+            read -r psize _ < <(du -Dh --max-depth=0 "$backup" 2>/dev/null)
             echo -en " ${BLD} dir path/size:"
             echo -e "$(tput cr)$(tput cuf 17) ${BLU}$backup ${NRM}${BLD}($psize)${NRM}"
           done
