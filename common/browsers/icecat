@@ -1,8 +1,6 @@
 if [[ -d $HOME/.mozilla/icecat ]]; then
     PSNAME="$browser"
-    while read -r line; do
-        if [[ "$line" =~ ^[Pp]ath=(.*)$ ]]; then
-            profileItem="${BASH_REMATCH[1]}"
+    while read -r profileItem; do
             if [[ "${profileItem:0:1}" == "/" ]]; then
                 # path is not relative
                 DIRArr+=("$profileItem")
@@ -11,8 +9,7 @@ if [[ -d $HOME/.mozilla/icecat ]]; then
                 # fully qualified path
                 DIRArr+=("$HOME/.mozilla/icecat/$profileItem")
             fi
-        fi
-    done < "$HOME/.mozilla/icecat/profiles.ini"
+    done < <(awk -F= '/^\[Profile/ { p=1 } /^\[/ && !/^\[Profile/ { p=0 } p && $1=="Path" { print $2 }' "$HOME/.mozilla/icecat/profiles.ini")
 fi
 
 check_suffix=1

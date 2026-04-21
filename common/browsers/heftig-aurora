@@ -1,9 +1,7 @@
 # https://bbs.archlinux.org/viewtopic.php?id=117157
 if [[ -d "$HOME"/.mozilla/aurora ]]; then
     PSNAME="aurora"
-    while read -r line; do
-        if [[ "$line" =~ ^[Pp]ath=(.*)$ ]]; then
-            profileItem="${BASH_REMATCH[1]}"
+    while read -r profileItem; do
             if [[ "${profileItem:0:1}" == "/" ]]; then
                 # path is not relative
                 DIRArr+=("$profileItem")
@@ -12,8 +10,7 @@ if [[ -d "$HOME"/.mozilla/aurora ]]; then
                 # fully qualified path
                 DIRArr+=("$HOME/.mozilla/aurora/$profileItem")
             fi
-        fi
-    done < "$HOME/.mozilla/firefox/profiles.ini"
+    done < <(awk -F= '/^\[Profile/ { p=1 } /^\[/ && !/^\[Profile/ { p=0 } p && $1=="Path" { print $2 }' "$HOME/.mozilla/firefox/profiles.ini")
 fi
 
 check_suffix=1

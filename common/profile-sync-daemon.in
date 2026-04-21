@@ -77,6 +77,13 @@ fi
 VOLATILE="$XDG_RUNTIME_DIR/psd"
 PID_FILE="$XDG_RUNTIME_DIR/psd.pid"
 
+# Acquire global atomic lock to prevent concurrent executions
+exec 9> "$XDG_RUNTIME_DIR/psd.lock"
+if ! flock -n 9; then
+  echo -e " ${RED}ERROR:${NRM}${BLD} profile-sync-daemon is currently executing another operation. Aborting to prevent data corruption.${NRM}"
+  exit 1
+fi
+
 # Setup check for config file
 if [[ -f "$PSDCONF" ]]; then
   if [[ ! -f "$PID_FILE" ]]; then
@@ -492,6 +499,18 @@ do_sync_for() {
         fi
       fi
       echo -e "${BLD}$browser $REPORT successful${NRM}"
+
+      # Crash recovery snapshot rotation
+      local CRASHArr=()
+      while IFS= read -d '' -r backup; do
+        CRASHArr=("${CRASHArr[@]}" "$backup")
+      done < <(find "${DIR%/*}" -maxdepth 1 -type d -name "${DIR##*/}-backup-crashrecovery-*" -print0 | sort -r -z)
+
+      if [[ ${#CRASHArr[@]} -gt $BACKUP_LIMIT ]]; then
+        for remove in "${CRASHArr[@]:$BACKUP_LIMIT}"; do
+          rm -rf "$remove"
+        done
+      fi
     else
       if [[ ! -d "$homedir" ]] ; then
         echo -e "${RED}$DIR does not exist! Is /home unmounted?${NRM}" >&2
@@ -769,7 +788,6 @@ case "$1" in
       running_check
       ungraceful_state_check
       do_sync
-      enforce
     fi
     ;;
   unsync)
