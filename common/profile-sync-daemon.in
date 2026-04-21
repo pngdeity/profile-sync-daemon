@@ -66,7 +66,7 @@ if [[ -z "$XDG_RUNTIME_DIR" ]]; then
     exit 1
   fi
   if ! chmod 0700 "${XDG_RUNTIME_DIR}"; then
-    echo -e " ${RED}ERROR:${NRM}${BLD} Uname to make runtime directory '${XDG_RUNTIME_DIR}' only accessible to user '$user'.${NRM}"
+    echo -e " ${RED}ERROR:${NRM}${BLD} Unable to make runtime directory '${XDG_RUNTIME_DIR}' only accessible to user '$user'.${NRM}"
     exit 1
   fi
 elif [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
@@ -206,6 +206,14 @@ dep_check() {
     echo -e " ${BLD}I require awk but it's not installed. ${RED}Aborting!${NRM}" >&2
     exit 1
   fi
+  if ! command -v flock >/dev/null 2>&1; then
+    echo -e " ${BLD}I require flock but it's not installed. ${RED}Aborting!${NRM}" >&2
+    exit 1
+  fi
+  if ! command -v pgrep >/dev/null 2>&1; then
+    echo -e " ${BLD}I require pgrep but it's not installed. ${RED}Aborting!${NRM}" >&2
+    exit 1
+  fi
   if ! command -v gdbus >/dev/null 2>&1; then
     if [[ $SUSPSYNC -eq 1 ]]; then
       echo -e " ${BLD}I require gdbus but it's not installed. ${RED}Aborting!${NRM}"
@@ -225,7 +233,7 @@ config_check() {
   # fuse3 is a depends of fuse-overlayfs but there are static builds floating around so to protect data, check for both
   for _bin in fuse-overlayfs fusermount3; do
     if [[ ! -x /usr/bin/"$_bin" ]]; then
-      echo -e "${BLD}${RED} ERROR!${NRM}${BLD} To use overlayfs mode, install fuse-overlayfs and fuse3${NRM}${BLD}${NRM}"
+      echo -e "${BLD}${RED} ERROR!${NRM}${BLD} profile-sync-daemon v7+ requires both fuse-overlayfs and fuse3 to function.${NRM}${BLD}${NRM}"
       exit 1
     fi
   done
@@ -270,8 +278,8 @@ ungraceful_state_check() {
       fi
 
       if [[ -d "$BACKUP" ]]; then
-        if [[ -d $DIR ]]; then
-          echo "Unexpected state detected: we have $BACKUP, but $DIR already exists. Trying move $DIR to $DIR" "$DIR-old-profile-$NOW"
+        if [[ -d "$DIR" ]]; then
+          echo "Unexpected state detected: we have $BACKUP, but $DIR already exists. Attempting to move $DIR to $DIR-old-profile-$NOW"
           mv --no-target-directory "$DIR" "$DIR-old-profile-$NOW"
         fi
 
