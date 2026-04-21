@@ -17,7 +17,6 @@ User of eCryptFS are encouraged not to use psd unless willing to help troublesho
 * Google Chrome (stable, beta, and dev)
 * Heftig's version of Aurora (this is an Arch Linux-only browser: https://bbs.archlinux.org/viewtopic.php?id=117157)
 * Icecat (GNU version of Firefox)
-* Iceweasel (Debian version of Firefox)
 * Inox (https://bbs.archlinux.org/viewtopic.php?id=198763)
 * Luakit
 * Midori

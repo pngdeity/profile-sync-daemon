@@ -61,12 +61,8 @@ if [[ -z "$XDG_RUNTIME_DIR" ]]; then
     echo -e " ${RED}ERROR:${NRM}${BLD} Unable to create runtime directory '${XDG_RUNTIME_DIR}'.${NRM}"
     exit 1
   fi
-  if ! chown "${user}" "${XDG_RUNTIME_DIR}"; then
-    echo -e " ${RED}ERROR:${NRM}${BLD} Unable to make user '${user}' owner of runtime directory '${XDG_RUNTIME_DIR}'.${NRM}"
-    exit 1
-  fi
   if ! chmod 0700 "${XDG_RUNTIME_DIR}"; then
-    echo -e " ${RED}ERROR:${NRM}${BLD} Uname to make runtime directory '${XDG_RUNTIME_DIR}' only accessible to user '$user'.${NRM}"
+    echo -e " ${RED}ERROR:${NRM}${BLD} Unable to make runtime directory '${XDG_RUNTIME_DIR}' only accessible to user '$user'.${NRM}"
     exit 1
   fi
 elif [[ ! -d "$XDG_RUNTIME_DIR" ]]; then
@@ -216,7 +212,7 @@ config_check() {
   # fuse3 is a depends of fuse-overlayfs but there are static builds floating around so to protect data, check for both
   for _bin in fuse-overlayfs fusermount3; do
     if [[ ! -x /usr/bin/"$_bin" ]]; then
-      echo -e "${BLD}${RED} ERROR!${NRM}${BLD} To use overlayfs mode, install fuse-overlayfs and fuse3${NRM}${BLD}${NRM}"
+      echo -e "${BLD}${RED} ERROR!${NRM}${BLD} profile-sync-daemon v7+ requires both fuse-overlayfs and fuse3 to function.${NRM}${BLD}${NRM}"
       exit 1
     fi
   done
@@ -261,19 +257,17 @@ ungraceful_state_check() {
       fi
 
       if [[ -d "$BACKUP" ]]; then
-        if [[ -d $DIR ]]; then
-          echo "Unexpected state detected: we have $BACKUP, but $DIR already exists. Trying move $DIR to $DIR" "$DIR-old-profile-$NOW"
+        if [[ -d "$DIR" ]]; then
+          echo "Unexpected state detected: we have $BACKUP, but $DIR already exists. Attempting to move $DIR to $DIR-old-profile-$NOW"
           mv --no-target-directory "$DIR" "$DIR-old-profile-$NOW"
         fi
 
-        if [[ -d "$BACK_OVFS" ]]; then
-          # always snapshot the most recent of these two dirs...
-          # if using overlayfs $BACK_OVFS and $BACKUP should be compared
-          # against each other to see which is newer and then that should
-          # be what psd snapshots since BACKUP (the lowerdir) is readonly
-          # at the time the user started psd could be many resync cycles
-          # in the past
+        # overlayfs is mandatory in v7+ so compare $BACK_OVFS and $BACKUP
+        # to see which is newer and then that should be what psd snapshots
+        # since BACKUP (the lowerdir) is readonly at the time the user
+        # started psd could be many resync cycles in the past
 
+        if [[ -d "$BACK_OVFS" ]]; then
           BACKUP_TIME=$(stat "$BACKUP" | grep Change | awk '{ print $2,$3 }')
           BACK_OVFS_TIME=$(stat "$BACK_OVFS" | grep Change | awk '{ print $2,$3 }')
 
@@ -288,14 +282,12 @@ ungraceful_state_check() {
           mv --no-target-directory "$TARGETTOKEEP" "$DIR"
           rm -rf "$BACKUP"
         else
-          # we only find the BACKUP and no BACKOVFS then either the initial resync
-          # never occurred before the crash using overlayfs or we aren't using overlayfs
-          # at all which can be treated the same way
-
+          # we only find the BACKUP and no BACKOVFS then the initial resync
+          # never occurred before the crash
           if [[ $CRRE -eq 1 ]]; then
             cp -a --reflink=auto "$BACKUP" "$BACKUP-crashrecovery-$NOW"
-            mv --no-target-directory "$BACKUP" "$DIR"
           fi
+          mv --no-target-directory "$BACKUP" "$DIR"
         fi
       fi
     done
@@ -624,6 +616,8 @@ parse() {
   echo -e "$(tput cr)$(tput cuf 17) ${resync_color}$resync_state${NRM}${BLD}${NRM}"
   echo -en " ${BLD}sync on sleep:"
   echo -e "$(tput cr)$(tput cuf 17) ${psss_color}$psss_state${NRM}${BLD}${NRM}"
+  echo -en " ${BLD}use overlayfs:"
+  echo -e "$(tput cr)$(tput cuf 17) ${GRN}mandatory${NRM}${BLD}${NRM}"
   echo
   echo -e "${BLD}Psd will manage the following per ${BLU}${PSDCONF}${NRM}${BLD}:${NRM}"
   echo

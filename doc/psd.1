@@ -16,7 +16,7 @@ Speed.
 .PP
 Since the profile/profiles, browser cache*, etc. are relocated into tmpfs (RAM disk), the corresponding I/O associated with using the browser is also redirected from the physical disk to the RAM, thus improving browser responsiveness during read/writes to profiles.
 .PP
-*Note that some browsers such as Chrome/Chromium, Firefox, Midori, and Rekonq actually keep their cache directories separate from their browser profile directory. It is not within the scope of Profile-sync-daemon to modify this behavior; users wishing to relocate this directory, may refer to the following url for several work-arounds: https://wiki.archlinux.org/index.php/Chromium_Tips_and_Tweaks#Cache_in_tmpfs
+*Note that some browsers such as Chrome/Chromium, Firefox (since v21), Midori, and Rekonq actually keep their cache directories separate from their browser profile directory. It is not within the scope of profile-sync-daemon to modify this behavior; users wishing to relocate this directory may refer to the following URL for several work-arounds: https://wiki.archlinux.org/index.php/Chromium_Tips_and_Tweaks#Cache_in_tmpfs
 .SH SETUP
 $XDG_CONFIG_HOME/psd/psd.conf (referred to hereafter as "the config file") contains all user managed settings.
 .PP
@@ -43,6 +43,7 @@ The preview option can be called to show users exactly what psd will do/is doing
 .fam C
  systemd service: active
  resync-timer:    active
+ use overlayfs:   mandatory
 
  Psd will manage the following per /home/facade/.config/psd/.psd.conf:
 
@@ -124,8 +125,6 @@ Heftig's version of Aurora (Arch Linux: https://bbs.archlinux.org/viewtopic.php?
 .IP \(bu 3
 Icecat
 .IP \(bu 3
-Iceweasel
-.IP \(bu 3
 Inox (https://bbs.archlinux.org/viewtopic.php?id=198763)
 .IP \(bu 3
 Luakit
@@ -151,9 +150,9 @@ Vivaldi
 Vivaldi-snapshot
 .RE
 .PP
-Psd's infrastructure can work in principal with any browser that uses a generic chrome or mozilla, etc. format. User supplied profiles are provided in /usr/share/psd/contrib/ and can be manually copied to /usr/share/psd/browsers/ if one wishes to sync that particular browser. Make a corresponding entry in the BROWSERS array within the config file. Support for these is unsupported.
+Psd's infrastructure can work in principle with any browser that uses a generic chrome or mozilla, etc. format. User-supplied profiles are provided in /usr/share/psd/contrib/ and can be manually copied to /usr/share/psd/browsers/ if one wishes to sync that particular browser. Make a corresponding entry in the BROWSERS array within the config file. These are unsupported.
 .SH NOTE ON SYMLINKED PROFILES
-Currently, psd does not support symlinked profiles and will refuse to sync if one is detected. For example, your firefox profile is ~/.mozilla/firefox/f8cv8bfu.default but you have moved that directory to /foo/bar/f8cv8bfu.default and replaced it with symlink:
+Currently, psd does not support symlinked profiles and will refuse to sync if one is detected. For example, your firefox profile is ~/.mozilla/firefox/f8cv8bfu.default, but you have moved that directory to /foo/bar/f8cv8bfu.default and replaced it with a symlink:
 .PP
 .nf
 .fam C
