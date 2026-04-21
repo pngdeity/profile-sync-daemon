@@ -441,93 +441,138 @@ kill_browsers() {
   wait
 }
 
+parallel_rsync() {
+  # Parallelizes rsync by chunking top-level subdirectories into separate jobs.
+  # Usage: parallel_rsync SRC DST [rsync-options...]
+  local src="$1"
+  local dst="$2"
+  shift 2
+  local opts=("$@")
+  local -a pids=()
+  local ret=0
+
+  # Purge top-level dirs in dst that no longer exist in src before spawning jobs.
+  # Done sequentially because directory removal is typically fast (zero or one stale dir).
+  while IFS= read -r -d '' dstdir; do
+    [[ ! -d "$src/${dstdir##*/}" ]] && rm -rf "$dstdir"
+  done < <(find "$dst" -maxdepth 1 -mindepth 1 -type d -print0)
+
+  # Sync root-level files only; '- */' excludes all subdirectories so that
+  # each subdirectory is handled by its own parallel job below.
+  rsync "${opts[@]}" --delete-after --filter='- */' "$src/" "$dst/" &
+  pids+=($!)
+
+  # Sync each top-level subdirectory in a separate background job
+  local chunkname
+  while IFS= read -r -d '' subdir; do
+    chunkname="${subdir##*/}"
+    mkdir -p "$dst/$chunkname"
+    rsync "${opts[@]}" --delete-after "$src/$chunkname/" "$dst/$chunkname/" &
+    pids+=($!)
+  done < <(find "$src" -maxdepth 1 -mindepth 1 -type d -print0)
+
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" || ret=1
+  done
+  return "$ret"
+}
+
 do_sync_for() {
   browser=$1
   load_env_for "$browser"
+  local -a pids=()
   for item in "${DIRArr[@]}"; do
-    DIR="$item"
-    BACKUP="$item-backup"
-    BACK_OVFS="$item-back-ovfs"
-    suffix=
-    if suffix_needed "$browser"; then
-      suffix="-${item##*/}"
-    fi
-    TMP="$VOLATILE/$user-$browser$suffix"
-    UPPER="$VOLATILE/$user-$browser${suffix}-rw"
-    WORK="$VOLATILE/.$user-$browser${suffix}"
-    local REPORT
-
-    # make tmpfs container
-    if [[ -d "$DIR" ]]; then
-      # retain permissions on sync target
-      PREFIXP=$(stat -c %a "$DIR")
-      [[ -r "$TMP" ]] || install -dm"$PREFIXP" --owner="$user" --group="$group" "$TMP"
-
-      if [[ ! -r "$UPPER" ]]; then
-        install -dm"$PREFIXP" --owner="$user" --group="$group" "$UPPER" || exit 2
+    (
+      DIR="$item"
+      BACKUP="$item-backup"
+      BACK_OVFS="$item-back-ovfs"
+      suffix=
+      if suffix_needed "$browser"; then
+        suffix="-${item##*/}"
       fi
-      if [[ ! -r "$WORK" ]]; then
-        install -dm"$PREFIXP" --owner="$user" --group="$group" "$WORK" || exit 2
-      fi
+      TMP="$VOLATILE/$user-$browser$suffix"
+      UPPER="$VOLATILE/$user-$browser${suffix}-rw"
+      WORK="$VOLATILE/.$user-$browser${suffix}"
+      REPORT=
 
-      # backup target and link to tmpfs container
-      if [[ $(readlink "$DIR") != "$TMP" ]]; then
-        mv --no-target-directory "$DIR" "$BACKUP"
-      fi
+      # make tmpfs container
+      if [[ -d "$DIR" ]]; then
+        # retain permissions on sync target
+        PREFIXP=$(stat -c %a "$DIR")
+        [[ -r "$TMP" ]] || install -dm"$PREFIXP" --owner="$user" --group="$group" "$TMP"
 
-      # sync the tmpfs targets to the disc
-      if [[ -e "$DIR"/.flagged ]]; then
-        REPORT="resync"
-        if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$DIR/" "$BACK_OVFS/"; then
-          echo -e "${RED}Error: Failed to resync $DIR to $BACK_OVFS${NRM}" >&2
-          exit 2
+        if [[ ! -r "$UPPER" ]]; then
+          install -dm"$PREFIXP" --owner="$user" --group="$group" "$UPPER" || exit 2
         fi
-      else
-        # initial sync
-        REPORT="sync"
-        if ! mountpoint -q "$TMP"; then
-          fuse-overlayfs -o lowerdir="$BACKUP",upperdir="$UPPER",workdir="$WORK" "$TMP"
-          if ! mountpoint -q "$TMP"; then
+        if [[ ! -r "$WORK" ]]; then
+          install -dm"$PREFIXP" --owner="$user" --group="$group" "$WORK" || exit 2
+        fi
+
+        # backup target and link to tmpfs container
+        if [[ $(readlink "$DIR") != "$TMP" ]]; then
+          mv --no-target-directory "$DIR" "$BACKUP"
+        fi
+
+        # sync the tmpfs targets to the disc
+        if [[ -e "$DIR"/.flagged ]]; then
+          REPORT="resync"
+          if ! parallel_rsync "$DIR" "$BACK_OVFS" -aX --inplace --no-whole-file --exclude .flagged; then
+            echo -e "${RED}Error: Failed to resync $DIR to $BACK_OVFS${NRM}" >&2
             exit 2
           fi
+        else
+          # initial sync
+          REPORT="sync"
+          if ! mountpoint -q "$TMP"; then
+            fuse-overlayfs -o lowerdir="$BACKUP",upperdir="$UPPER",workdir="$WORK" "$TMP"
+            if ! mountpoint -q "$TMP"; then
+              exit 2
+            fi
+          fi
+
+          [[ -h "$DIR" ]] && unlink "$DIR"
+          ln -s "$TMP" "$DIR"
+
+          chown -h "$user":"$group" "$DIR"
+          touch "$DIR/.flagged"
+
+          # create $BACK_OVFS directory for storing resync data
+          if [[ ! -d "$BACK_OVFS" ]]; then
+            install -dm"$PREFIXP" --owner="$user" --group="$group" "$BACK_OVFS" || {
+              echo -e "${RED}Error: Failed to create $BACK_OVFS${NRM}" >&2
+              exit 2
+            }
+          fi
         fi
+        echo -e "${BLD}$browser $REPORT successful${NRM}"
 
-        [[ -h "$DIR" ]] && unlink "$DIR"
-        ln -s "$TMP" "$DIR"
+        # Crash recovery snapshot rotation
+        local -a CRASHArr=()
+        while IFS= read -d '' -r backup; do
+          CRASHArr=("${CRASHArr[@]}" "$backup")
+        done < <(find "${DIR%/*}" -maxdepth 1 -type d -name "${DIR##*/}-backup-crashrecovery-*" -print0 | sort -r -z)
 
-        chown -h "$user":"$group" "$DIR"
-        touch "$DIR/.flagged"
-
-        # create $BACK_OVFS directory for storing resync data
-        if [[ ! -d "$BACK_OVFS" ]]; then
-          install -dm"$PREFIXP" --owner="$user" --group="$group" "$BACK_OVFS" || {
-            echo -e "${RED}Error: Failed to create $BACK_OVFS${NRM}" >&2
-            exit 2
-          }
+        if [[ ${#CRASHArr[@]} -gt $BACKUP_LIMIT ]]; then
+          for remove in "${CRASHArr[@]:$BACKUP_LIMIT}"; do
+            rm -rf "$remove"
+          done
+        fi
+      else
+        if [[ ! -d "$homedir" ]] ; then
+          echo -e "${RED}$DIR does not exist! Is /home unmounted?${NRM}" >&2
+          exit 1
+        elif [[ -d "$BACKUP" ]] ; then
+          echo -e "${RED}$DIR does not exist or is a broken symlink! Is $VOLATILE unmounted?${NRM}" >&2
+          exit 1
         fi
       fi
-      echo -e "${BLD}$browser $REPORT successful${NRM}"
-
-      # Crash recovery snapshot rotation
-      local CRASHArr=()
-      while IFS= read -d '' -r backup; do
-        CRASHArr=("${CRASHArr[@]}" "$backup")
-      done < <(find "${DIR%/*}" -maxdepth 1 -type d -name "${DIR##*/}-backup-crashrecovery-*" -print0 | sort -r -z)
-
-      if [[ ${#CRASHArr[@]} -gt $BACKUP_LIMIT ]]; then
-        for remove in "${CRASHArr[@]:$BACKUP_LIMIT}"; do
-          rm -rf "$remove"
-        done
-      fi
-    else
-      if [[ ! -d "$homedir" ]] ; then
-        echo -e "${RED}$DIR does not exist! Is /home unmounted?${NRM}" >&2
-        exit 1
-      elif [[ -d "$BACKUP" ]] ; then
-        echo -e "${RED}$DIR does not exist or is a broken symlink! Is $VOLATILE unmounted?${NRM}" >&2
-        exit 1
-      fi
-    fi
+    ) &
+    pids+=($!)
+  done
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" || exit 1
   done
 }
 
@@ -579,59 +624,67 @@ enforce() {
 do_unsync_for() {
   browser="$1"
   load_env_for "$browser"
+  local -a pids=()
   for item in "${DIRArr[@]}"; do
-    DIR="$item"
-    BACKUP="$item-backup"
-    BACK_OVFS="$item-back-ovfs"
-    suffix=
-    if suffix_needed "$browser"; then
-      suffix="-${item##*/}"
-    fi
-    TMP="$VOLATILE/$user-$browser$suffix"
-    UPPER="$VOLATILE/$user-$browser${suffix}-rw"
-    WORK="$VOLATILE/.$user-$browser${suffix}"
-    # check if user has browser profile
-    if [[ -h "$DIR" ]]; then
-      unlink "$DIR"
+    (
+      DIR="$item"
+      BACKUP="$item-backup"
+      BACK_OVFS="$item-back-ovfs"
+      suffix=
+      if suffix_needed "$browser"; then
+        suffix="-${item##*/}"
+      fi
+      TMP="$VOLATILE/$user-$browser$suffix"
+      UPPER="$VOLATILE/$user-$browser${suffix}-rw"
+      WORK="$VOLATILE/.$user-$browser${suffix}"
+      # check if user has browser profile
+      if [[ -h "$DIR" ]]; then
+        unlink "$DIR"
 
-      # unmount overlayfs FIRST while BACKUP still exists at original location
-      # moving BACKUP before unmounting breaks the overlayfs mount (lowerdir path disappears)
-      if mountpoint -q "$TMP"; then
-        # sync latest changes from overlayfs to BACK_OVFS, then to BACKUP before unmounting
-        # always update BACK_OVFS from live overlayfs first to capture latest changes
-        if [[ -d "$BACK_OVFS" ]]; then
-          # Update BACK_OVFS with latest changes from live overlayfs
-          if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$TMP/" "$BACK_OVFS/"; then
-            echo -e "${RED}Error: Failed to sync $TMP to $BACK_OVFS during unsync${NRM}" >&2
-            exit 2
+        # unmount overlayfs FIRST while BACKUP still exists at original location
+        # moving BACKUP before unmounting breaks the overlayfs mount (lowerdir path disappears)
+        if mountpoint -q "$TMP"; then
+          # sync latest changes from overlayfs to BACK_OVFS, then to BACKUP before unmounting
+          # always update BACK_OVFS from live overlayfs first to capture latest changes
+          if [[ -d "$BACK_OVFS" ]]; then
+            # Update BACK_OVFS with latest changes from live overlayfs
+            if ! parallel_rsync "$TMP" "$BACK_OVFS" -aX --inplace --no-whole-file --exclude .flagged; then
+              echo -e "${RED}Error: Failed to sync $TMP to $BACK_OVFS during unsync${NRM}" >&2
+              exit 2
+            fi
+            # sync BACK_OVFS to BACKUP
+            if ! parallel_rsync "$BACK_OVFS" "$BACKUP" -aX --inplace --no-whole-file --exclude .flagged; then
+              echo -e "${RED}Error: Failed to sync $BACK_OVFS to $BACKUP during unsync${NRM}" >&2
+              exit 2
+            fi
+          else
+            # BACK_OVFS doesn't exist, sync directly from TMP to BACKUP
+            if ! parallel_rsync "$TMP" "$BACKUP" -aX --inplace --no-whole-file --exclude .flagged; then
+              echo -e "${RED}Error: Failed to sync $TMP to $BACKUP during unsync${NRM}" >&2
+              exit 2
+            fi
           fi
-          # sync BACK_OVFS to BACKUP
-          if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$BACK_OVFS/" "$BACKUP/"; then
-            echo -e "${RED}Error: Failed to sync $BACK_OVFS to $BACKUP during unsync${NRM}" >&2
-            exit 2
-          fi
-        else
-          # BACK_OVFS doesn't exist, sync directly from TMP to BACKUP
-          if ! rsync -aX --delete-after --inplace --no-whole-file --exclude .flagged "$TMP/" "$BACKUP/"; then
-            echo -e "${RED}Error: Failed to sync $TMP to $BACKUP during unsync${NRM}" >&2
-            exit 2
-          fi
+          # unmount (before moving BACKUP)
+          fusermount3 -u "$TMP"
+          rm -rf "$TMP" "$UPPER" "$WORK"
         fi
-        # unmount (before moving BACKUP)
-        fusermount3 -u "$TMP"
-        rm -rf "$TMP" "$UPPER" "$WORK"
-      fi
 
-      # restore BACKUP (which now has the changes merged in)
-      [[ -d "$BACKUP" ]] && mv --no-target-directory "$BACKUP" "$DIR"
-      [[ -d "$TMP" ]] && rm -rf "$TMP"
-      echo -e "${BLD}$browser unsync successful${NRM}"
-    else
-      if [[ ! -d "$homedir" ]] ; then
-        echo -e "${RED}$DIR does not exist! Is /home unmounted?${NRM}" >&2
-        exit 1
+        # restore BACKUP (which now has the changes merged in)
+        [[ -d "$BACKUP" ]] && mv --no-target-directory "$BACKUP" "$DIR"
+        [[ -d "$TMP" ]] && rm -rf "$TMP"
+        echo -e "${BLD}$browser unsync successful${NRM}"
+      else
+        if [[ ! -d "$homedir" ]] ; then
+          echo -e "${RED}$DIR does not exist! Is /home unmounted?${NRM}" >&2
+          exit 1
+        fi
       fi
-    fi
+    ) &
+    pids+=($!)
+  done
+  local pid
+  for pid in "${pids[@]}"; do
+    wait "$pid" || exit 1
   done
 }
 
